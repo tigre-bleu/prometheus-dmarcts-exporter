@@ -93,38 +93,6 @@ else:
 
 
 conn.close()
-'''
-for archive, value in archives.iteritems():
-    archive_name=value['name']
-    archive_datetime=value['datetime']
-
-    print "updating "+archive+" from archive "+archive_name
-    print_prom(archive, "backup_last_update", time.mktime(archive_datetime.timetuple()))
-
-    cmd_borg_info=["borg","info",repository+"::"+archive_name]
-    proc_borg_info = subprocess.Popen(cmd_borg_info, stdout=subprocess.PIPE)
-    for line in proc_borg_info.stdout.readlines():
-        m=re.search("Number of files: (?P<files_number>\d*)", line)
-        if m:
-            print_prom(archive, "backup_files", m.group('files_number'))
-
-        m=re.search("Chunk index:\s*(?P<chunk_index_unique>\d*)\s*(?P<chunk_index_total>\d*)", line)
-        if m:
-            print_prom(archive, "backup_chunks_unique", m.group('chunk_index_unique'))
-            print_prom(archive, "backup_chunks_total", m.group('chunk_index_total'))
-
-        m=re.search("This archive:\s*(?P<original_size>\d*.\d*)\s(?P<original_size_unit>[A-Za-z]{2})\s*(?P<compressed_size>\d*.\d*)\s(?P<compressed_size_unit>[A-Za-z]{2})\s*(?P<total_size>\d*.\d*)\s(?P<total_size_unit>[A-Za-z]{2})", line)
-        if m:
-            print_prom(archive, "backup_last_size", calc_bytes(float(m.group('original_size')), m.group('original_size_unit')))
-            print_prom(archive, "backup_last_size_compressed", calc_bytes(float(m.group('compressed_size')), m.group('compressed_size_unit')))
-            print_prom(archive, "backup_last_size_dedup", calc_bytes(float(m.group('total_size')), m.group('total_size_unit')))
-
-        m=re.search("All archives:\s*(?P<original_size>\d*.\d*)\s(?P<original_size_unit>[A-Za-z]{2})\s*(?P<compressed_size>\d*.\d*)\s(?P<compressed_size_unit>[A-Za-z]{2})\s*(?P<total_size>\d*.\d*)\s(?P<total_size_unit>[A-Za-z]{2})", line)
-        if m:
-            print_prom(archive, "backup_total_size", calc_bytes(float(m.group('original_size')), m.group('original_size_unit')))
-            print_prom(archive, "backup_total_size_compressed", calc_bytes(float(m.group('compressed_size')), m.group('compressed_size_unit')))
-            print_prom(archive, "backup_total_size_dedup", calc_bytes(float(m.group('total_size')), m.group('total_size_unit')))
-'''
 
 tmp_file.close()
 shutil.move(tmp_file_name, prom_file)
