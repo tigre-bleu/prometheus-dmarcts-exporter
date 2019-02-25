@@ -1,0 +1,130 @@
+#!/usr/bin/env python
+# coding: utf-8 
+import socket
+import subprocess
+import re
+from datetime import datetime, timedelta
+import time
+import shutil
+from optparse import OptionParser
+import mysql.connector
+import Conf
+
+dbhost = Conf.dbhost
+dbname = Conf.dbname
+dbuser = Conf.dbuser
+dbpass = Conf.dbpass
+
+optp = OptionParser()
+
+optp.add_option('-o', '--output', help='Set output prom filename. Default to dmarcts.prom',
+            dest='output')
+optp.add_option('-m', '--min-date', help='Minimum date to extract data from (Format YYYY-MM-DD). Defaults to 1970, Jan 1st.',
+            dest='min_date')
+optp.add_option('-M', '--max-date', help='Maximum date to extract data from (Format YYYY-MM-DD). Defaults to current date',
+            dest='max_date')
+opts, args = optp.parse_args()
+
+textfile_collector_dir="/var/lib/prometheus/node-exporter"
+if opts.output is None:
+    prom_file=textfile_collector_dir+"/dmarcts.prom"
+else:
+    prom_file=textfile_collector_dir+"/"+opts.output
+
+if opts.max_date is None:
+    max_date = datetime.now()
+else:
+    max_date = datetime.strptime(opts.max_date, '%Y-%m-%d') + timedelta(days=1)
+    
+if opts.min_date is None:
+    min_date = datetime(1970, 1, 1)
+else:
+    min_date = datetime.strptime(opts.min_date, '%Y-%m-%d')
+
+def print_prom(domain, nb_reports, pass_pct):
+    tmp_file.write("dmarc_fully_passed_pct{domain=\""+domain+"\"} "+str(pass_pct)+"\n")
+    tmp_file.write("dmarc_reports{domain=\""+domain+"\"} "+str(nb_reports)+"\n")
+
+tmp_file_name=prom_file+".tmp"
+
+# Creating empty file
+tmp_file = open(tmp_file_name,"w") 
+
+# Get data from MySQL
+conn = mysql.connector.connect(host=dbhost,user=dbuser,password=dbpass, database=dbname)
+cursor = conn.cursor()
+
+cursor.execute("SELECT domain, org, policy_pct, mindate FROM report WHERE mindate >= '%s' AND maxdate <= '%s'" % (str(min_date.date().isoformat()), str(max_date.date().isoformat())))
+
+print "Imported Reports:"
+rows = cursor.fetchall()
+if len(rows):
+    policy_pct_domains={}
+    policy_pct_orgs={}
+    domains = []
+    orgs = []
+    for row in rows:
+        domain = row[0]
+        org = row[1]
+        policy_pct = row[2]
+        min_date = row[3]
+        print domain+" from "+org+": "+str(policy_pct)+"%"+" mindate="+str(min_date)
+
+        if not domain in domains:
+            domains.append(domain)
+            policy_pct_domains[domain]={'nb_reports': 0, 'pass_reports_pct': 100}
+
+        old_nb_reports = policy_pct_domains[domain]['nb_reports']
+        new_nb_reports = old_nb_reports + 1
+        old_pass_reports_pct = policy_pct_domains[domain]['pass_reports_pct']
+        new_pass_reports_pct = (old_pass_reports_pct * old_nb_reports + policy_pct)/new_nb_reports
+
+        policy_pct_domains[domain]['nb_reports']=new_nb_reports
+        policy_pct_domains[domain]['pass_reports_pct']=new_pass_reports_pct
+
+    print "\nSynthesis:"
+    for domain in domains:
+        nb_reports = policy_pct_domains[domain]['nb_reports']
+        pass_reports_pct = policy_pct_domains[domain]['pass_reports_pct']
+        print "Domain "+domain+": "+str(nb_reports)+" reports with "+str(pass_reports_pct)+"% of them fully passed"
+        print_prom(domain, nb_reports, pass_reports_pct)
+else:
+    print "No report for this period"
+
+
+conn.close()
+'''
+for archive, value in archives.iteritems():
+    archive_name=value['name']
+    archive_datetime=value['datetime']
+
+    print "updating "+archive+" from archive "+archive_name
+    print_prom(archive, "backup_last_update", time.mktime(archive_datetime.timetuple()))
+
+    cmd_borg_info=["borg","info",repository+"::"+archive_name]
+    proc_borg_info = subprocess.Popen(cmd_borg_info, stdout=subprocess.PIPE)
+    for line in proc_borg_info.stdout.readlines():
+        m=re.search("Number of files: (?P<files_number>\d*)", line)
+        if m:
+            print_prom(archive, "backup_files", m.group('files_number'))
+
+        m=re.search("Chunk index:\s*(?P<chunk_index_unique>\d*)\s*(?P<chunk_index_total>\d*)", line)
+        if m:
+            print_prom(archive, "backup_chunks_unique", m.group('chunk_index_unique'))
+            print_prom(archive, "backup_chunks_total", m.group('chunk_index_total'))
+
+        m=re.search("This archive:\s*(?P<original_size>\d*.\d*)\s(?P<original_size_unit>[A-Za-z]{2})\s*(?P<compressed_size>\d*.\d*)\s(?P<compressed_size_unit>[A-Za-z]{2})\s*(?P<total_size>\d*.\d*)\s(?P<total_size_unit>[A-Za-z]{2})", line)
+        if m:
+            print_prom(archive, "backup_last_size", calc_bytes(float(m.group('original_size')), m.group('original_size_unit')))
+            print_prom(archive, "backup_last_size_compressed", calc_bytes(float(m.group('compressed_size')), m.group('compressed_size_unit')))
+            print_prom(archive, "backup_last_size_dedup", calc_bytes(float(m.group('total_size')), m.group('total_size_unit')))
+
+        m=re.search("All archives:\s*(?P<original_size>\d*.\d*)\s(?P<original_size_unit>[A-Za-z]{2})\s*(?P<compressed_size>\d*.\d*)\s(?P<compressed_size_unit>[A-Za-z]{2})\s*(?P<total_size>\d*.\d*)\s(?P<total_size_unit>[A-Za-z]{2})", line)
+        if m:
+            print_prom(archive, "backup_total_size", calc_bytes(float(m.group('original_size')), m.group('original_size_unit')))
+            print_prom(archive, "backup_total_size_compressed", calc_bytes(float(m.group('compressed_size')), m.group('compressed_size_unit')))
+            print_prom(archive, "backup_total_size_dedup", calc_bytes(float(m.group('total_size')), m.group('total_size_unit')))
+'''
+
+tmp_file.close()
+shutil.move(tmp_file_name, prom_file)
